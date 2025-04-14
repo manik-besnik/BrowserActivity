@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Daily Activity</title>
+</head>
+<body>
+  <h1>Activity Logs</h1>
+  <div id="output"></div>
+
+  <script>
+    chrome.storage.local.get("activityLogs", ({ activityLogs }) => {
+      const container = document.getElementById("output");
+      for (const date in activityLogs) {
+        const dateEl = document.createElement("h2");
+        dateEl.textContent = date;
+        container.appendChild(dateEl);
+
+        const logs = activityLogs[date];
+        for (const domain in logs) {
+          const domainEl = document.createElement("h3");
+          domainEl.textContent = domain;
+          container.appendChild(domainEl);
+
+          const ul = document.createElement("ul");
+          logs[domain].forEach(entry => {
+            const li = document.createElement("li");
+            li.textContent = `${entry.url} - ${entry.timeSpent}s`;
+            ul.appendChild(li);
+          });
+          container.appendChild(ul);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
