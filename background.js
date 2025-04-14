@@ -11,22 +11,23 @@ function getDomain(url) {
 }
 
 function getTodayDate() {
-  return new Date().toISOString().split('T')[0]; // "YYYY-MM-DD"
+  return new Date().toISOString().split('T')[0];
 }
 
 async function logTimeSpent(tabId, url) {
   if (!url || !startTime) return;
 
   const endTime = Date.now();
-  const timeSpent = Math.round((endTime - startTime) / 1000); // in seconds
+  const timeSpent = Math.round((endTime - startTime) / 1000);
   const domain = getDomain(url);
   const date = getTodayDate();
 
   if (!domain) return;
 
+  console.log(`Logging ${timeSpent}s on ${url} (${domain}) for ${date}`);
+
   chrome.storage.local.get(["activityLogs"], (result) => {
     const logs = result.activityLogs || {};
-
     if (!logs[date]) logs[date] = {};
     if (!logs[date][domain]) logs[date][domain] = [];
 
@@ -37,7 +38,9 @@ async function logTimeSpent(tabId, url) {
       endTime: new Date(endTime).toISOString()
     });
 
-    chrome.storage.local.set({ activityLogs: logs });
+    chrome.storage.local.set({ activityLogs: logs }, () => {
+      console.log("Saved to chrome.storage.local");
+    });
   });
 }
 
@@ -51,6 +54,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   activeTabId = tabId;
   startTime = Date.now();
   currentUrl = newTab.url;
+  console.log(`Switched to tab: ${currentUrl}`);
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -58,6 +62,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await logTimeSpent(tabId, currentUrl);
     startTime = Date.now();
     currentUrl = tab.url;
+    console.log(`Tab updated: ${currentUrl}`);
   }
 });
 
@@ -69,6 +74,7 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
       activeTabId = null;
       startTime = null;
       currentUrl = null;
+      console.log("Window unfocused - stopped tracking.");
     }
   }
 });

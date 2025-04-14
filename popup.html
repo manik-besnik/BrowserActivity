@@ -1,15 +1,18 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <title>Daily Activity</title>
-</head>
+<head><title>Tracker</title></head>
 <body>
-  <h1>Activity Logs</h1>
-  <div id="output"></div>
-
+  <h1>Logs</h1>
+  <div id="output">Loading...</div>
   <script>
     chrome.storage.local.get("activityLogs", ({ activityLogs }) => {
       const container = document.getElementById("output");
+      if (!activityLogs) {
+        container.textContent = "No data yet.";
+        return;
+      }
+
+      container.innerHTML = '';
       for (const date in activityLogs) {
         const dateEl = document.createElement("h2");
         dateEl.textContent = date;
