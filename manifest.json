@@ -1,6 +1,6 @@
 {
     "manifest_version": 3,
-    "name": "Site Time Tracker",
+    "name": "Time Tracker",
     "version": "1.0",
     "permissions": [
         "tabs",
@@ -9,13 +9,12 @@
         "activeTab"
     ],
     "background": {
-        "service_worker": "background.js"
+      "service_worker": "background.js"
     },
     "action": {
-        "default_popup": "popup.html",
-        "default_title": "Time Tracker"
+      "default_popup": "popup.html",
+      "default_title": "Time Tracker"
     },
-    "host_permissions": [
-        "<all_urls>"
-    ]
-}
+    "host_permissions": ["<all_urls>"]
+  }
+  

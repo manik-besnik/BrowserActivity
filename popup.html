@@ -1,39 +1,11 @@
 <!DOCTYPE html>
 <html>
-<head><title>Tracker</title></head>
+<head>
+  <title>Time Tracker</title>
+</head>
 <body>
-  <h1>Logs</h1>
+  <h1>Browser Activity</h1>
   <div id="output">Loading...</div>
-  <script>
-    chrome.storage.local.get("activityLogs", ({ activityLogs }) => {
-      const container = document.getElementById("output");
-      if (!activityLogs) {
-        container.textContent = "No data yet.";
-        return;
-      }
-
-      container.innerHTML = '';
-      for (const date in activityLogs) {
-        const dateEl = document.createElement("h2");
-        dateEl.textContent = date;
-        container.appendChild(dateEl);
-
-        const logs = activityLogs[date];
-        for (const domain in logs) {
-          const domainEl = document.createElement("h3");
-          domainEl.textContent = domain;
-          container.appendChild(domainEl);
-
-          const ul = document.createElement("ul");
-          logs[domain].forEach(entry => {
-            const li = document.createElement("li");
-            li.textContent = `${entry.url} - ${entry.timeSpent}s`;
-            ul.appendChild(li);
-          });
-          container.appendChild(ul);
-        }
-      }
-    });
-  </script>
+  <script src="popup.js"></script>
 </body>
 </html>
