@@ -1,1 +1,1 @@
-# BrowserActivity
+# BrowserActivity For Track Browser Usage
