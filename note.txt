@@ -1,0 +1,58 @@
+Instagram  Bot Web App
+
+Stack: Python, FastApi, PostgresSQL, Reactjs, TailwindCss and Others
+Optional Stack: NodesJS, PostgresSQL, Reactjs, TailwindCss and Others
+
+Proposal 1:
+Features
+1. Scrape Leads  based condition of OnlyFans creators
+2. Daily Report and Leads data export in google sheet
+3. Clear UI for Web Applications
+4. Manual Bot Active, Stop Option
+5. Setup VPS Server
+6. Deploy App VPS Server
+
+Duration: 18 days
+Cost: $1300
+
+
+Proposal 2:
+Features
+1. Scrape Leads  based condition of OnlyFans creators
+2. Daily Report and Leads data export in csv
+3. Clear UI for Web Applications
+4. Manual Bot Active, Stop Option
+5. Setup VPS Server
+6. Deploy App VPS Server
+
+Duration: 17 days
+Cost: $1250
+
+
+Proposal 3:
+Features
+1. Scrape Leads  based condition of OnlyFans creators
+2. Daily Report and Leads data export in csv
+3. Clear UI for Web Applications
+4. Manual Bot Active, Stop Option
+
+Duration: 14 days
+Cost: $1000
+
+Proposal 4:
+Features
+1. Scrape Leads  based condition of OnlyFans creators
+2. Daily Report and Leads data export in csv
+3. Clear UI for Web Applications
+
+Duration: 14 days
+Cost: $900
+
+
+
+Create Action Class For Team  Member Invite Callback
+
+Handle Auth user and non auth user also
+
+
+Team Member Invite Callback Action Improve

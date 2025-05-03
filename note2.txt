@@ -1,0 +1,719 @@
+<?php
+declare(strict_types=1);
+
+use App\Enums\InviteMemberStatus;
+use App\Enums\UserType;
+use App\Jobs\InvitationEmailSend;
+use App\Mail\TeamInvitationMail;
+use App\Models\Company;
+use App\Models\CompanyPackage;
+use App\Models\InviteMember;
+use App\Models\User;
+use App\Models\UserCompany;
+use App\Models\UserRole;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Queue;
+use Tests\TestCase;
+
+class InviteTeamMemberActionTest2 extends TestCase
+{
+
+
+    protected Company $company;
+    protected User $user;
+
+    protected function setUp(): void
+    {
+
+        parent::setUp();
+
+        $this->company = Company::query()->first();
+        $this->user = User::query()->first();
+    }
+
+
+uses(TestCase::class);
+
+beforeEach(function ()
+{
+
+    $this->user = User::query()->first();
+
+    $this->uniqueId = uniqid();
+
+    $this->company = Company::query()
+        ->where('id', $this->user->current_company_id)
+        ->orWhere('owner_id', $this->user->id)
+        ->first();
+
+});
+
+
+    /*
+    * Common setup for inviting a team member.
+     */
+    public function inviteTeamMemberSetup(string $email): ?string
+    {
+        Mail::fake();
+        Queue::fake();
+
+        $this->startSession();
+        auth()->guard('web')->login($this->user);
+        $this->csrfToken = csrf_token();
+
+        // Trigger the job to send the invitation email
+        $response = $this->post(route('invite.team-member'), [
+            'email' => $email,
+            'role' => 'admin',
+            'company_id' => $this->company->id,
+            '_token' => $this->csrfToken,
+        ]);
+
+        $response->assertRedirect();
+
+        $this->assertDatabaseHas('invite_members', [
+            'email' => $email,
+            'company_id' => $this->company->id,
+            'status' => InviteMemberStatus::PENDING->value,
+            'role' => 'admin',
+        ]);
+
+        dump('Email Stored at invite_members table');
+
+        Queue::assertPushed(InvitationEmailSend::class, function (InvitationEmailSend $invitationEmailSend) use ($email) {
+            $invitationEmailSend->handle();
+            return $invitationEmailSend->email === $email;
+        });
+
+        dump('Job Dispatched for invite mail send');
+
+        $invitationLink = null;
+        Mail::assertSent(TeamInvitationMail::class, function (TeamInvitationMail $mail) use (&$invitationLink) {
+            $htmlBody = $mail->render();
+            preg_match('/<a href="([^"]+)"/', $htmlBody, $matches);
+            $invitationLink = $matches[1] ?? null;
+            return $invitationLink !== null;
+        });
+
+        return $invitationLink;
+    }
+
+
+
+    /** Invite Sent Test Case */
+it('invite a new team member successfully', function ()
+{
+
+    Mail::fake();
+    Queue::fake();
+
+    $this->startSession();
+    auth()->guard('web')->login($this->user);
+    $this->csrfToken = csrf_token();
+
+    $email = 'newmember@example.com';
+
+    // Trigger the job to send the invitation email
+    $response = $this->post(route('invite.team-member'), [
+        'email' => $email,
+        'role' => 'admin',
+        'company_id' => $this->company->id,
+        '_token' => $this->csrfToken,
+    ]);
+
+    $response->assertRedirect();
+
+    $this->assertDatabaseHas('invite_members', [
+        'email' => $email,
+        'company_id' => $this->company->id,
+        'status' => InviteMemberStatus::PENDING->value,
+        'role' => 'admin',
+    ]);
+
+    dump('Email Stored at invite_members table');
+
+    Queue::assertPushed(InvitationEmailSend::class, function (InvitationEmailSend $invitationEmailSend) use ($email) {
+        $invitationEmailSend->handle();
+
+        return $invitationEmailSend->email === $email;
+    });
+
+    dump('Job Dispatched for invite mail send');
+
+
+    Mail::assertSent(TeamInvitationMail::class, function (TeamInvitationMail $mail) use (&$invitationLink) {
+        $htmlBody = $mail->render();
+
+        preg_match('/<a href="([^"]+)"/', $htmlBody, $matches);
+        $invitationLink = $matches[1] ?? null;
+
+        return $invitationLink !== null;
+    });
+
+    if ($invitationLink) {
+        $response = $this->get($invitationLink);
+        $response->assertStatus(302);
+        $response->assertRedirect();
+    }
+
+});
+
+
+it('redirect to login if user already exists to this company', function ()
+{
+
+    $email = 'admin@admin.com';
+
+    $inviteMember = InviteMember::query()->create([
+        'email' => $email,
+        'company_id' => $this->company->id,
+        'role' => 'admin',
+        'status' => 'pending',
+        'company_account_type' => 'parent_account',
+        'invite_period_end' => Carbon::now()->addDays(30),
+        'owner_id' => $this->user->id,
+    ]);
+
+    $hash = encrypt(['email' => 'admin@admin.com', 'company_id' => $this->company->id, 'invite_id' => $inviteMember->id]);
+
+    Cache::put('team_invite_hash_' . $this->company->id . $email, $hash, Carbon::now()->addDays(30));
+
+    $response = $this->get(route('invite.team-member.callback', $hash));
+
+    $response->assertStatus(302);
+    $response->assertRedirect(route('login'));
+
+    dump('user redirect to login page');
+
+    $this->assertDatabaseMissing('invite_members', [
+        'id' => $inviteMember->id,
+    ]);
+
+    dump('Invite User deleted from database');
+
+});
+
+it('user assign to company when user account already exists', function ()
+{
+
+    $email = 'new_member' . uniqid() . '@mail.com';
+
+    $companyId = $this->company->id;
+
+    $inviteMember = InviteMember::query()->create([
+        'email' => $email,
+        'company_id' => $companyId,
+        'role' => 'admin',
+        'status' => 'pending',
+        'company_account_type' => 'parent_account',
+        'invite_period_end' => Carbon::now()->addDays(30),
+        'owner_id' => $this->user->id,
+    ]);
+
+    $hash = encrypt(['email' => $email, 'company_id' => $companyId, 'invite_id' => $inviteMember->id]);
+
+    $user = User::query()->create([
+        'email' => $email,
+        'name' => 'Invite User',
+        'password' => Hash::make('password'),
+    ]);
+
+    Cache::put('team_invite_hash_' . $companyId . $email, $hash, Carbon::now()->addDays(30));
+
+    $response = $this->get(route('invite.team-member.callback', $hash));
+
+    $this->assertDatabaseHas('users', [
+        'current_company_id' => $companyId,
+    ]);
+
+    dump('Current Company Updated');
+
+    $this->assertDatabaseHas('user_companies', [
+        'user_id' => $user->id,
+        'company_id' => $companyId,
+        'user_type' => UserType::USER->value,
+    ]);
+
+    dump('New Company Assigned with User');
+
+    $this->assertDatabaseHas('user_roles', [
+        'user_id' => $user->id,
+        'role_id' => 1,
+        'company_id' => $companyId,
+    ]);
+
+    dump('New Role Assigned with User');
+
+    $this->assertDatabaseMissing('invite_members', [
+        'id' => $inviteMember->id,
+    ]);
+
+    dump('Invite User deleted from database');
+
+    $response->assertStatus(302);
+    $response->assertRedirect(route('login'));
+
+});
+
+    /** Test Case For Authenticate User */
+it('authenticate team member invite accept and redirect to quick start', function ()
+{
+
+    /** @var Company $company */
+    $company = $this->company->replicate();
+
+    $company->name = 'Team member';
+    $company->save();
+
+    $companyPackage = CompanyPackage::query()->first();
+
+    $package = $companyPackage->replicate();
+    $package->company_id = $company->id;
+    $package->is_lifetime = 1;
+    $package->status = 'active';
+    $package->save();
+
+    $email = 'auth_member_test@mail.com';
+
+    $companyId = $this->company->id;
+
+    $user = User::query()->create([
+        'email' => $email,
+        'name' => 'Invite User With Login',
+        'password' => Hash::make('password'),
+        'current_company_id' => $company->id,
+        'own_company_id' => $company->id,
+    ]);
+
+    UserRole::query()->create([
+        'user_id' => $user->id,
+        'role_id' => 1,
+        'company_id' => $company->id,
+        'role_data' => null,
+        'crm_type' => 'agency',
+    ]);
+
+    UserCompany::query()->create([
+        'user_id' => $user->id,
+        'company_id' => $company->id,
+        'user_type' => UserType::USER->value,
+    ]);
+
+    $inviteMember = InviteMember::query()->create([
+        'email' => $email,
+        'company_id' => $companyId,
+        'role' => 'admin',
+        'status' => 'pending',
+        'company_account_type' => 'parent_account',
+        'invite_period_end' => Carbon::now()->addDays(30),
+        'owner_id' => $this->user->id,
+    ]);
+
+    $hash = encrypt(['email' => $email, 'company_id' => $companyId, 'invite_id' => $inviteMember->id]);
+
+    $this->startSession();
+
+    $this->actingAs($user);
+
+    $this->csrfToken = csrf_token();
+
+    Cache::put('team_invite_hash_' . $companyId . $email, $hash, Carbon::now()->addDays(30));
+
+    $response = $this->get(route('invite.team-member.callback', ['hash' => $hash]));
+
+    $response->assertStatus(302);
+    $response->assertRedirect(route('quick-start'));
+
+    $this->assertDatabaseHas('user_companies', [
+        'user_id' => $user->id,
+        'company_id' => $companyId,
+        'user_type' => UserType::USER->value,
+    ]);
+
+    dump('New Company Assigned with User');
+
+    $this->assertDatabaseHas('user_roles', [
+        'user_id' => $user->id,
+        'role_id' => 1,
+        'company_id' => $companyId,
+    ]);
+
+    dump('New Role Assigned with User');
+
+    $this->assertDatabaseHas('users', [
+        'current_company_id' => $companyId,
+    ]);
+
+    dump('Current Company Updated');
+
+    $this->assertDatabaseMissing('invite_members', [
+        'id' => $inviteMember->id,
+    ]);
+
+    dump('Invite User deleted from database');
+
+});
+
+it('authenticate team member already exists in invited company', function ()
+{
+
+    $email = 'auth_member_test@mail.com';
+
+    $companyId = $this->company->id;
+
+    $user = User::query()->where('email', $email)->first();
+
+    $inviteMember = InviteMember::query()->create([
+        'email' => $email,
+        'company_id' => $companyId,
+        'role' => 'admin',
+        'status' => 'pending',
+        'company_account_type' => 'parent_account',
+        'invite_period_end' => Carbon::now()->addDays(30),
+        'owner_id' => $this->user->id,
+    ]);
+
+    $hash = encrypt(['email' => $email, 'company_id' => $companyId, 'invite_id' => $inviteMember->id]);
+
+    $this->startSession();
+
+    $this->actingAs($user);
+
+    $this->csrfToken = csrf_token();
+
+    Cache::put('team_invite_hash_' . $companyId . $email, $hash, Carbon::now()->addDays(30));
+
+    $response = $this->get(route('invite.team-member.callback', ['hash' => $hash]));
+
+    $response->assertStatus(302);
+
+    $response->assertRedirect(route('quick-start'));
+
+    $this->assertDatabaseHas('users', [
+        'current_company_id' => $companyId,
+    ]);
+
+    dump('Current Company Updated');
+
+    $this->assertDatabaseMissing('invite_members', [
+        'id' => $inviteMember->id,
+    ]);
+
+    dump('Invite User deleted from database');
+
+});
+
+it('authenticate team member not exists in company invite', function ()
+{
+
+    /** @var Company $company */
+    $company = $this->company->replicate();
+
+    $company->name = 'Team member';
+    $company->save();
+
+    $companyPackage = CompanyPackage::query()->first();
+
+    $package = $companyPackage->replicate();
+    $package->company_id = $company->id;
+    $package->is_lifetime = 1;
+    $package->status = 'active';
+    $package->save();
+
+    $email = 'auth_member_' . uniqid() . '@mail.com';
+
+    $companyId = $this->company->id;
+
+    $user = User::query()->create([
+        'email' => $email,
+        'name' => 'Invite User With Login',
+        'password' => Hash::make('password'),
+        'current_company_id' => $company->id,
+        'own_company_id' => $company->id,
+    ]);
+
+    UserRole::query()->create([
+        'user_id' => $user->id,
+        'role_id' => 1,
+        'company_id' => $company->id,
+        'role_data' => null,
+        'crm_type' => 'agency',
+    ]);
+
+    UserCompany::query()->create([
+        'user_id' => $user->id,
+        'company_id' => $company->id,
+        'user_type' => UserType::USER->value,
+    ]);
+
+    $inviteMember = InviteMember::query()->create([
+        'email' => $email,
+        'company_id' => $companyId,
+        'role' => 'admin',
+        'status' => 'pending',
+        'company_account_type' => 'parent_account',
+        'invite_period_end' => Carbon::now()->addDays(30),
+        'owner_id' => $this->user->id,
+    ]);
+
+    $hash = encrypt(['email' => $email, 'company_id' => $companyId, 'invite_id' => $inviteMember->id]);
+
+    $this->startSession();
+
+    $this->actingAs($user);
+
+    $this->csrfToken = csrf_token();
+
+    Cache::put('team_invite_hash_' . $companyId . $email, $hash, Carbon::now()->addDays(30));
+
+    $response = $this->get(route('invite.team-member.callback', ['hash' => $hash]));
+
+    $response->assertStatus(302);
+    $response->assertRedirect(route('quick-start'));
+
+    $this->assertDatabaseHas('user_companies', [
+        'user_id' => $user->id,
+        'company_id' => $companyId,
+        'user_type' => UserType::USER->value,
+    ]);
+
+    dump('New Company Assigned with User');
+
+    $this->assertDatabaseHas('user_roles', [
+        'user_id' => $user->id,
+        'role_id' => 1,
+        'company_id' => $companyId,
+    ]);
+
+    dump('New Role Assigned with User');
+
+    $this->assertDatabaseHas('users', [
+        'current_company_id' => $companyId,
+    ]);
+
+    dump('Current Company Updated');
+
+    $this->assertDatabaseMissing('invite_members', [
+        'id' => $inviteMember->id,
+    ]);
+
+    dump('Invite User deleted from database');
+
+});
+
+    /** User Logged in but invited with another email address */
+it('authenticate team member exists in invited company but logged in with other email', function ()
+{
+    /** @var Company $company */
+    $company = $this->company->replicate();
+
+    $company->name = 'Team member';
+    $company->save();
+
+    $companyPackage = CompanyPackage::query()->first();
+
+    $package = $companyPackage->replicate();
+    $package->company_id = $company->id;
+    $package->is_lifetime = 1;
+    $package->status = 'active';
+    $package->save();
+
+    $email = 'auth_member_' . uniqid() . '@mail.com';
+
+    $companyId = $this->company->id;
+
+    $user = User::query()->create([
+        'email' => $email,
+        'name' => 'Invite User With Login',
+        'password' => Hash::make('password'),
+        'current_company_id' => $company->id,
+        'own_company_id' => $company->id,
+    ]);
+
+    UserRole::query()->create([
+        'user_id' => $user->id,
+        'role_id' => 1,
+        'company_id' => $company->id,
+        'role_data' => null,
+        'crm_type' => 'agency',
+    ]);
+
+    UserCompany::query()->create([
+        'user_id' => $user->id,
+        'company_id' => $company->id,
+        'user_type' => UserType::USER->value,
+    ]);
+
+    $inviteMember = InviteMember::query()->create([
+        'email' => 'auth_member_test@mail.com',
+        'company_id' => $companyId,
+        'role' => 'admin',
+        'status' => 'pending',
+        'company_account_type' => 'parent_account',
+        'invite_period_end' => Carbon::now()->addDays(30),
+        'owner_id' => $this->user->id,
+    ]);
+
+    $hash = encrypt(['email' => 'auth_member_test@mail.com', 'company_id' => $companyId, 'invite_id' => $inviteMember->id]);
+
+    $this->startSession();
+
+    $this->actingAs($user);
+
+    $this->csrfToken = csrf_token();
+
+    Cache::put('team_invite_hash_' . $companyId . 'auth_member_test@mail.com', $hash, Carbon::now()->addDays(30));
+
+    $response = $this->get(route('invite.team-member.callback', ['hash' => $hash]));
+
+    $response->assertStatus(302);
+    $response->assertRedirect(route('login'));
+
+    $this->assertDatabaseHas('users', [
+        'current_company_id' => $companyId,
+    ]);
+
+    dump('Current Company Updated');
+
+    $this->assertDatabaseMissing('invite_members', [
+        'id' => $inviteMember->id,
+    ]);
+
+    dump('Invite User deleted from database');
+});
+
+it('authenticate team member not exists in invited company and logged in with other email', function ()
+{
+    /** @var Company $company */
+    $company = $this->company->replicate();
+
+    $company->name = 'Team member';
+    $company->save();
+
+    $companyPackage = CompanyPackage::query()->first();
+
+    $package = $companyPackage->replicate();
+    $package->company_id = $company->id;
+    $package->is_lifetime = 1;
+    $package->status = 'active';
+    $package->save();
+
+    $email = 'auth_member_' . uniqid() . '@mail.com';
+
+    $companyId = $this->company->id;
+
+    $user = User::query()->create([
+        'email' => $email,
+        'name' => 'Invite User With Login',
+        'password' => Hash::make('password'),
+        'current_company_id' => $company->id,
+        'own_company_id' => $company->id,
+    ]);
+
+    UserRole::query()->create([
+        'user_id' => $user->id,
+        'role_id' => 1,
+        'company_id' => $company->id,
+        'role_data' => null,
+        'crm_type' => 'agency',
+    ]);
+
+    UserCompany::query()->create([
+        'user_id' => $user->id,
+        'company_id' => $company->id,
+        'user_type' => UserType::USER->value,
+    ]);
+
+    $inviteMember = InviteMember::query()->create([
+        'email' => $user->email,
+        'company_id' => $companyId,
+        'role' => 'admin',
+        'status' => 'pending',
+        'company_account_type' => 'parent_account',
+        'invite_period_end' => Carbon::now()->addDays(30),
+        'owner_id' => $this->user->id,
+    ]);
+
+    $hash = encrypt(['email' => $user->email, 'company_id' => $companyId, 'invite_id' => $inviteMember->id]);
+
+    $this->startSession();
+
+    $this->actingAs($this->user);
+
+    $this->csrfToken = csrf_token();
+
+    Cache::put('team_invite_hash_' . $companyId . $user->email, $hash, Carbon::now()->addDays(30));
+
+    $response = $this->get(route('invite.team-member.callback', ['hash' => $hash]));
+
+    $response->assertStatus(302);
+    $response->assertRedirect(route('login'));
+
+    $this->assertDatabaseHas('users', [
+        'current_company_id' => $companyId,
+    ]);
+
+    dump('Current Company Updated');
+
+    $this->assertDatabaseHas('user_companies', [
+        'user_id' => $user->id,
+        'company_id' => $companyId,
+        'user_type' => UserType::USER->value,
+    ]);
+
+    dump('User Attached with invited Company');
+
+    $this->assertDatabaseHas('user_roles', [
+        'user_id' => $user->id,
+        'role_id' => 1,
+        'company_id' => $companyId,
+    ]);
+
+    dump('User Attached with invited Company Role');
+
+    $this->assertDatabaseMissing('invite_members', [
+        'id' => $inviteMember->id,
+    ]);
+
+    dump('Invite User deleted from database');
+});
+
+it('authenticate team member not exists in invited company and logged in with other email and invited email not exits in users table', function ()
+{
+
+    $email = 'auth_member_' . uniqid() . '@mail.com';
+
+    $companyId = $this->company->id;
+
+    $inviteMember = InviteMember::query()->create([
+        'email' => $email,
+        'company_id' => $companyId,
+        'role' => 'admin',
+        'status' => 'pending',
+        'company_account_type' => 'parent_account',
+        'invite_period_end' => Carbon::now()->addDays(30),
+        'owner_id' => $this->user->id,
+    ]);
+
+    $hash = encrypt(['email' => $email, 'company_id' => $companyId, 'invite_id' => $inviteMember->id]);
+
+    $this->startSession();
+
+    $this->actingAs($this->user);
+
+    $this->csrfToken = csrf_token();
+
+    Cache::put('team_invite_hash_' . $companyId . $email, $hash, Carbon::now()->addDays(30));
+
+    $response = $this->get(route('invite.team-member.callback', ['hash' => $hash]));
+
+    $response->assertStatus(302);
+    $response->assertRedirect();
+
+});
+
+
+}
